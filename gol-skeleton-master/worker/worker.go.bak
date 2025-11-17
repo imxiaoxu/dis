@@ -1,0 +1,74 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"net"
+	"net/rpc"
+	"os"
+
+	"uk.ac.bris.cs/gameoflife/gol"
+)
+
+// Worker RPC 类型
+type Worker struct{}
+
+// ProcessTurn: Broker 期望 worker 接收 WorldParams 并返回新一代 world
+func (w *Worker) ProcessTurn(params gol.WorldParams, reply *[][]uint8) error {
+	// 调试输出：记录被调用与网格尺寸
+	fmt.Printf("Worker.ProcessTurn called: width=%d height=%d\n", params.ImageWidth, params.ImageHeight)
+
+	// 调用 gol 包内的本地处理函数（需在 gol 包实现 ProcessTurnLocal）
+	result := gol.ProcessTurnLocal(params)
+
+	// 如果 result 为 nil，生成一个空的非 nil 网格，避免 gob 编码 nil 引发错误
+	if result == nil {
+		h := params.ImageHeight
+		wid := params.ImageWidth
+		result = make([][]uint8, h)
+		for y := 0; y < h; y++ {
+			row := make([]uint8, wid)
+			result[y] = row
+		}
+		fmt.Println("Worker.ProcessTurn: result was nil, returned zero grid")
+	}
+
+	// 确保 reply 指向非 nil 值
+	*reply = result
+	fmt.Printf("Worker.ProcessTurn returning rows=%d\n", len(*reply))
+	return nil
+}
+
+// 可选：若 Broker 调用其他方法（例如获取活细胞数），保留该方法作占位
+func (w *Worker) GetAliveCellsCount(_ interface{}, reply *int) error {
+	*reply = 0
+	return nil
+}
+
+func main() {
+	port := flag.Int("port", 8031, "port to listen on")
+	flag.Parse()
+
+	server := rpc.NewServer()
+	if err := server.RegisterName("Worker", new(Worker)); err != nil {
+		fmt.Println("RegisterName error:", err)
+		os.Exit(1)
+	}
+
+	addr := fmt.Sprintf(":%d", *port)
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Println("Listen error:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Worker listening on %s\n", addr)
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("Accept error:", err)
+			continue
+		}
+		go server.ServeConn(conn)
+	}
+}
