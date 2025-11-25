@@ -13,20 +13,20 @@ type Broker struct {
 	mu           sync.Mutex // 保护 currentWorld
 }
 
-// 注意：这个 WorldParams 必须和 distributor / worker 那边保持一致
+// WorldParams 必须和 distributor / worker 那边保持一致
 type WorldParams struct {
 	ImageWidth  int
 	ImageHeight int
 	World       [][]uint8
 }
 
-// 每个 worker 的客户端连接
+// 每个 worker 客户端连接
 type WorkerClient struct {
 	addr   string
 	client *rpc.Client
 }
 
-// 发送给 worker 的任务：负责 [StartY, EndY) 这些行，对应的 worldPart 带上下边界
+// 发送给 worker 的任务：，对应的 worldPart 带上下边界
 type Task struct {
 	StartY, EndY int
 	WorldPart    [][]uint8
@@ -52,9 +52,9 @@ func (b *Broker) ProcessTurn(params WorldParams, reply *[][]uint8) error {
 
 	// 3. 拷贝一份当前的 worker 列表，避免并发问题
 	workerMutex.Lock()
-	numWorkers := len(workerList)
+	numWorkers := len(workerList) //获取当前已注册的工作节点数量 。初始化
 	workers := make([]WorkerClient, numWorkers)
-	copy(workers, workerList)
+	copy(workers, workerList) //获取当前时刻 避免变化影响逻辑
 	workerMutex.Unlock()
 
 	if numWorkers == 0 {
@@ -67,11 +67,11 @@ func (b *Broker) ProcessTurn(params WorldParams, reply *[][]uint8) error {
 	var resultMu sync.Mutex
 
 	// 4. 分给每个 worker 一段 y 区间
-	for i, worker := range workers {
+	for i, worker := range workers { //// i 是当前工作节点的索引，worker 是对应的工作节点客户端（用于后续分配任务）
 		startY := i * rowsPerWorker
 		endY := startY + rowsPerWorker
 		if i == numWorkers-1 {
-			endY = params.ImageHeight // 最后一个 worker 把剩下的都算完
+			endY = params.ImageHeight // 最后一个 worker 把剩下的都算完 将结束行设为世界总高度
 		}
 
 		// 构造 worldPart：核心行 + 上下边界（循环边界）
@@ -126,7 +126,7 @@ func (b *Broker) ProcessTurn(params WorldParams, reply *[][]uint8) error {
 	return nil
 }
 
-// GetAliveCellsCount：供 Distributor 通过 RPC 查询当前世界的存活细胞数量
+// GetAliveCellsCount： Distributor 通过 RPC 查询当前世界的存活细胞数量
 // 参数类型用 struct{}，和 distributor 中的 struct{}{} 一致。
 func (b *Broker) GetAliveCellsCount(_ struct{}, reply *int) error {
 	b.mu.Lock()
@@ -135,7 +135,7 @@ func (b *Broker) GetAliveCellsCount(_ struct{}, reply *int) error {
 	aliveCount := 0
 	for _, row := range b.currentWorld {
 		for _, cell := range row {
-			// 课程里规定：255 表示活细胞
+			//
 			if cell == 255 {
 				aliveCount++
 			}
@@ -146,9 +146,9 @@ func (b *Broker) GetAliveCellsCount(_ struct{}, reply *int) error {
 	return nil
 }
 
-// 注册一个 worker
+// 注册一个 worker 建立RPC连接
 func registerWorker(address string) error {
-	client, err := rpc.Dial("tcp", address)
+	client, err := rpc.Dial("tcp", address) //TCP连接并初始化RPC客户端
 	if err != nil {
 		fmt.Printf("Connect worker %s failed: %v\n", address, err)
 		return err
@@ -166,18 +166,21 @@ func registerWorker(address string) error {
 }
 
 func main() {
-	// 要注册的 Worker 地址
 	workerAddresses := []string{
-		"localhost:8031",
-		"localhost:8032",
-		"localhost:8033",
-		"localhost:8034",
-		"localhost:8035",
-		"localhost:8036",
-		"localhost:8037",
-		"localhost:8038",
-		"localhost:8039",
-		"localhost:8040",
+		// EC2-A
+		"172.31.90.169:8031",
+		"172.31.90.169:8032",
+		"172.31.90.169:8033",
+		// EC2-B
+		"172.31.17.148:8031",
+		"172.31.17.148:8032",
+		"172.31.17.148:8033",
+
+		// EC2-C
+		"172.31.16.85:8031",
+		"172.31.16.85:8032",
+		"172.31.16.85:8033",
+		"172.31.16.85:8034",
 	}
 
 	// 注册所有 worker
@@ -187,14 +190,14 @@ func main() {
 		}
 	}
 
-	// 注册 Broker RPC 服务（名字默认为 "Broker"）
+	// regist  Broker RPC service
 	broker := new(Broker)
 	if err := rpc.Register(broker); err != nil {
 		fmt.Printf("Register broker RPC service failed: %v\n", err)
 		return
 	}
 
-	// 在 :8080 监听
+	// listen 8080
 	listener, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		fmt.Printf("Broker listen on port 8080 failed: %v\n", err)

@@ -60,14 +60,15 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	if len(initialAlive) > 0 {
 		c.events <- CellsFlipped{CompletedTurns: turn, Cells: initialAlive}
 	}
-	c.events <- TurnComplete{CompletedTurns: turn}
+	c.events <- TurnComplete{CompletedTurns: turn} // 用于同步系统状态，告知 SDL
 
 	// 5. 连接 Broker（AWS 端）
-	client, err := rpc.Dial("tcp", "127.0.0.1:8080")
+	client, err := rpc.Dial("tcp", "54.87.214.152:8080")
 	if err != nil {
 		fmt.Println("Error connecting to server:", err)
 		return
 	}
+	// 延迟关闭 RPC 连接：无论是否正常都关 防止长期占用 Broker 连接资源，避免tcp资源泄漏
 	defer client.Close()
 
 	isPaused := false
@@ -96,18 +97,17 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		}
 	}()
 
-	// 7. 键盘处理：
-	//    - 单独 goroutine 专门处理 'p'，确保 Paused 事件在 2 秒内发出（满足 TestKeyboard）
+	// 7. 输入- 单独 goroutine 专门处理 'p'，确保 Paused 事件在 2 秒内发出（满足 TestKeyboard）
 	//    - 其它按键通过 controlKeys 交给主循环处理
 	controlKeys := make(chan rune, 16)
 
 	go func() {
-		for key := range keyPresses {
+		for key := range keyPresses { // 循环读取 keyPresses 通道中的键盘输入
 			if key == 'p' {
 				mu.Lock()
 				isPaused = !isPaused
 				currentTurn := turn
-				state := Executing
+				state := Executing // 定义当前执行状态
 				if isPaused {
 					state = Paused
 				}
@@ -131,7 +131,7 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 		case 's':
 			// 保存当前世界
 			mu.Lock()
-			worldCopy := deepCopyWorldUint8(world)
+			worldCopy := deepCopyWorldUint8(world) //保存的是“按下保存键瞬间”的世界状态，后续主协程修改 world 不会干扰保存结果
 			currentTurn := turn
 			mu.Unlock()
 			saveWorld(p, c, worldCopy, currentTurn)
@@ -257,34 +257,16 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 func deepCopyWorldUint8(src [][]uint8) [][]uint8 {
 	if src == nil {
 		return nil
-	}
-	h := len(src)
+	} //// 边界处理：，避免后续索引 panic
+	h := len(src) //// 获取原始切片的高度（行数）：h 等于外层切片的长度
+	// 创建目标切片的外层结构
 	dst := make([][]uint8, h)
 	for i := 0; i < h; i++ {
 		row := make([]uint8, len(src[i]))
-		copy(row, src[i])
+		copy(row, src[i]) //// 拷贝原始行数据到目标行：copy 是值拷贝，将 src[i] 的所有元素复制到 row
 		dst[i] = row
 	}
-	return dst
-}
-
-// 计算邻居存活数：统一使用 [][]uint8
-func countLiveNeighbors(world [][]uint8, x, y, width, height int) int {
-	dirs := []struct{ dx, dy int }{
-		{-1, -1}, {-1, 0}, {-1, 1},
-		{0, -1}, {0, 1},
-		{1, -1}, {1, 0}, {1, 1},
-	}
-	count := 0
-	for _, d := range dirs {
-		nx, ny := x+d.dx, y+d.dy
-		if nx >= 0 && nx < width && ny >= 0 && ny < height {
-			if world[ny][nx] == 255 {
-				count++
-			}
-		}
-	}
-	return count
+	return dst //// 返回深拷贝后的完整二维切片：dst 与 src 内存完全独立，数据完全一致
 }
 
 // 统计存活细胞总数

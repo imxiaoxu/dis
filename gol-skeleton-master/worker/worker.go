@@ -28,7 +28,7 @@ func (w *Worker) ProcessPart(t Task, reply *[][]uint8) error {
 	}
 
 	width := len(t.WorldPart[0])
-	res := make([][]uint8, height)
+	res := make([][]uint8, height) // new state subm  nohalo
 
 	// 对应的核心行在 WorldPart 中是 [1 .. height]
 	for y := 0; y < height; y++ {
@@ -38,7 +38,7 @@ func (w *Worker) ProcessPart(t Task, reply *[][]uint8) error {
 		for x := 0; x < width; x++ {
 			neighbors := 0
 
-			// 8 邻居（注意：垂直方向靠 halo 行，水平方向用环绕）
+			// 8 邻居  垂直方向靠 halo 行，水平方向用环绕
 			for dy := -1; dy <= 1; dy++ {
 				for dx := -1; dx <= 1; dx++ {
 					if dx == 0 && dy == 0 {
